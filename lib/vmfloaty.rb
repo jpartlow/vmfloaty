@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-
 require 'rubygems'
 require 'commander'
 require 'colorize'
@@ -11,6 +10,7 @@ require 'vmfloaty/version'
 require 'vmfloaty/conf'
 require 'vmfloaty/utils'
 require 'vmfloaty/ssh'
+require 'vmfloaty/nspooler'
 
 class Vmfloaty
   include Commander::Methods
@@ -207,9 +207,9 @@ class Vmfloaty
                 modify_hash[vm] = Pooler.modify(verbose, url, vm, token, lifetime, tags)
               end
 
-              modify_hash.each do |hostname,status|
+              modify_hash.each do |host,status|
                 if status == false
-                  STDERR.puts "Could not modify #{hostname}."
+                  STDERR.puts "Could not modify #{host}."
                   modify_flag = false
                 end
               end
@@ -251,9 +251,9 @@ class Vmfloaty
                 modify_hash[vm] = Pooler.disk(verbose, url, vm, token, disk)
               end
 
-              modify_hash.each do |hostname,status|
+              modify_hash.each do |host,status|
                 if status == false
-                  STDERR.puts "Could not update disk space on #{hostname}."
+                  STDERR.puts "Could not update disk space on #{host}."
                   modify_flag = false
                 end
               end
@@ -584,6 +584,70 @@ class Vmfloaty
         else
           STDERR.puts "Could not find completion file for '#{shell}': No such file #{completion_file}"
           exit 1
+        end
+      end
+    end
+
+    command :nspooler do |c|
+      c.syntax = 'floaty nspooler <list [filter][--active][--reserved]|get ostype --reason|query hostname|release hostname> [options]'
+      c.summary = 'Interact with the non-standard pooler'
+      c.description = Utils.strip_heredoc(<<-EOF)
+        Provides a few commands for working with the non-standard pooler service.
+        (https://confluence.puppetlabs.com/pages/viewpage.action?pageId=135637522)
+        (https://github.com/puppetlabs/nspooler/blob/1.0.3/docs/API.md)
+      EOF
+      c.option '--verbose', 'Enables verbose output'
+      c.option '--nspooler-url STRING', String, 'URL of nspooler'
+      c.option '--nspooler-user STRING', String, 'User to authenticate with'
+      c.option '--nspooler-token STRING', String, 'Token for nspooler'
+      c.option '--active', 'List active (reserved) hosts for this user'
+      c.option '--reserved', 'List all reserved hosts'
+      c.option '--reason STRING', String, 'Reason for reserving the host'
+      c.action do |args, options|
+        verbose = options.verbose || config['verbose']
+        action = args.first
+        url = options.nspooler_url ||= config['nspooler-url']
+        token = options.nspooler_token ||= config['nspooler-token']
+
+        case action
+        when 'list'
+          active = options.active
+          reserved = options.reserved
+
+          if active
+            user = options.nspooler_user ||= config['nspooler-user']
+            raise MissingParamError, "User provided was nil. Cannot determine active vms." if user.nil?
+            active = NSPooler.reserved(verbose, url, user)
+            if active.empty?
+              puts 'NONE'
+            else
+              pp active
+            end
+          elsif reserved
+            reserved = NSPooler.reserved(verbose, url)
+            pp reserved
+          else
+            filter = args[1]
+            os_list = NSPooler.list(verbose, url, filter)
+            pp os_list
+          end
+        when 'get'
+          reason = options.reason
+          filter = args[1]
+          response = NSPooler.get(verbose, url, filter, token, reason)
+          pp response
+        when 'query'
+          hostname = args[1]
+          response = NSPooler.query(verbose, url, hostname)
+          pp response
+        when 'release'
+          hostname = args[1]
+          response = NSPooler.release(verbose, url, hostname, token)
+          pp response
+        when nil
+          STDERR.puts "No action provided"
+        else
+          STDERR.puts "Unkown action: #{action}"
         end
       end
     end
